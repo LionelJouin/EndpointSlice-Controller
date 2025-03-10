@@ -1,32 +1,56 @@
-# endpointslice
+# Endpointslice
 
-## Purpose
+This repository is fork of https://github.com/kubernetes/endpointslice (https://github.com/kubernetes/kubernetes/blob/master/staging/src/k8s.io/endpointslice).
 
-This repository contains packages related to the [EndpointSlices](https://github.com/kubernetes/enhancements/tree/master/keps/sig-network/0752-endpointslices)
-feature.
+This EndpointSlice reconciler library should be sufficiently generic to be used by:
+* The Kubernetes EndpointSlice controller
+* The Kubernetes EndpointSlice Mirroring controller
+* A Gateway API EndpointSelector (See [GEP-3539](https://github.com/kubernetes-sigs/gateway-api/pull/3608)) EndpointSlice Controller
+* A Multi-Cluster Service (MCS, See [KEP-1645](https://github.com/kubernetes/enhancements/blob/master/keps/sig-multicluster/1645-multi-cluster-services-api/README.md#using-endpointslice-objects-to-track-endpoints)) EndpointSlice Controller
+* An EndpointSlice Controller Selecting IPs in the annotations (e.g. [Multus](https://github.com/k8snetworkplumbingwg/multus-cni))
+* An EndpointSlice Controller Selecting IPs in the ResourceClaims of a Pod (e.g. IPs stored in the Device Status of the ResourceClaim, See [KEP-4817](https://github.com/kubernetes/enhancements/tree/master/keps/sig-node/4817-resource-claim-device-status))
 
-This EndpointSlice reconciler library is not sufficiently generic to be used by
-the EndpointSlice Mirroring controller. The reconciler in the EndpointSlice
-mirroring controller has a 1:1 mapping between Service/Endpoints and
-EndpointSlice, which results in a simpler implementation then the EndpointSlice
-staging lib. Contributions to move towards the shared code being used by the
-mirroring controller would be welcome.
+Orginally, this work comes from the [KEP-4770](https://github.com/kubernetes/enhancements/pull/4771). This part has been removed since but is still accessible from a [previous commit here (77ffcef2914d903b3b443feeaf502888d6f706c5)](https://github.com/kubernetes/enhancements/blob/77ffcef2914d903b3b443feeaf502888d6f706c5/keps/sig-network/4770-endpointslice-controller-flexibility/README.md#flexibility-on-the-endpointslice-reconciler-module-1).
 
-## Compatibility
+Example Usage (as if it would be used directly in Kubernetes):
+```go
+// Creates the reconciler.
+reconciler = NewReconciler(
+    client,
+    endpointSliceTracker,
+    eventRecorder,
+    controllerName,
+    maxEndpointsPerSlice,
+    endpointSliceMetrics,
+    WithTopologyCache(topologyCache),
+    WithTrafficDistribution(utilfeature.DefaultFeatureGate.Enabled(features.ServiceTrafficDistribution)),
+    WithPlaceholder(true),
+    WithOwnershipEnforced(true),
+)
 
-There are *NO compatibility guarantees* for this repository, yet.  It is in direct support of Kubernetes, so branches
-will track Kubernetes and be compatible with that repo.
+// DesiredEndpointSlicesFromServicePods replicates the behavior of the Kubernetes EndpointSlice Controller, so it is used for Services and PodIPs.
+desiredEndpointsByAddrTypePort, supportedAddressesTypes, err := DesiredEndpointSlicesFromServicePods(logger, pods, service, nodeLister)
+if err != nil {
+    return err
+}
 
-## Where does it come from?
+// The Version and Kind must be set manually.
+runtimeObject := service.DeepCopyObject()
+runtimeObject.GetObjectKind().SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Service"})
 
-This repository is synced from https://github.com/kubernetes/kubernetes/blob/master/staging/src/k8s.io/endpointslice
-Code changes are made in that location, merged into `k8s.io/kubernetes` and later synced here.
-
-## Things you should *NOT* do
-
- 1. Directly modify any files in this repo. Those are driven from `k8s.io/kubernetes/staging/src/k8s.io/endpointslice`.
- 2. Expect compatibility. This repo is changing quickly in direct support of Kubernetes.
-
-### OWNERS
-
-SIG Network owns the code.
+// Reconcile the EndpointSlices.
+err = reconciler.Reconcile(
+    logger,
+    runtimeObject,
+    service,
+    desiredEndpointsByAddrTypePort,
+    supportedAddressesTypes,
+    existingSlices,
+    service.Spec.TrafficDistribution,
+    LabelsFromService{Service: service},
+    triggerTime,
+)
+if err != nil {
+    return err
+}
+```
